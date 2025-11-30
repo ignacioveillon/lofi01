@@ -1,0 +1,259 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Simple 8-beat Lofi (Tone.js)</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <style>
+    body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial; background: #0f1724; color: #e6eef8; display:flex; align-items:center; justify-content:center; min-height:100vh; margin:0; }
+    .card { background: linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.01)); padding:24px; border-radius:12px; width:360px; box-shadow: 0 6px 30px rgba(2,6,23,0.6); }
+    h1 { margin:0 0 12px 0; font-size:20px; }
+    .controls { display:grid; gap:10px; }
+    .row { display:flex; gap:10px; align-items:center; }
+    button { background:#1f2937; color:#e6eef8; border:0; padding:10px 12px; border-radius:8px; cursor:pointer; }
+    input[type=range] { width:100%; }
+    label { font-size:13px; color:#a9c0da; min-width:60px; }
+    .small { font-size:12px; color:#9fb6d6; margin-top:8px; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Simple 8-beat Lofi — Tone.js</h1>
+
+    <div class="controls">
+      <div class="row">
+        <button id="startBtn">Start</button>
+        <button id="stopBtn" disabled>Stop</button>
+        <button id="randomBtn">Randomize Chords</button>
+      </div>
+
+      <div class="row">
+        <label for="bpm">BPM</label>
+        <input id="bpm" type="range" min="50" max="110" value="75">
+        <div id="bpmVal">75</div>
+      </div>
+
+      <div class="row">
+        <label for="masterVol">Volume</label>
+        <input id="masterVol" type="range" min="-30" max="6" value="-6">
+        <div id="volVal">-6 dB</div>
+      </div>
+
+      <div class="small">Pattern: 8 steps (8th notes). Chords on step 0 & 4. Click <em>Randomize</em> for a different chord color.</div>
+    </div>
+  </div>
+
+  <!-- Tone.js from CDN -->
+  <script src="https://unpkg.com/tone@14.7.77/build/Tone.min.js"></script>
+  <script>
+  // Basic lofi 8-step loop using Tone.js
+  (function(){
+    // UI elements
+    const startBtn = document.getElementById('startBtn');
+    const stopBtn = document.getElementById('stopBtn');
+    const randomBtn = document.getElementById('randomBtn');
+    const bpmSlider = document.getElementById('bpm');
+    const bpmVal = document.getElementById('bpmVal');
+    const volSlider = document.getElementById('masterVol');
+    const volVal = document.getElementById('volVal');
+
+    // Master chain
+    const master = new Tone.Gain().toDestination();
+    const masterVol = new Tone.Volume(parseFloat(volSlider.value)).connect(master);
+
+    // Gentle tape compressor/limiter for glue (optional)
+    const compressor = new Tone.Compressor({
+      threshold: -24,
+      ratio: 3,
+      attack: 0.02,
+      release: 0.5
+    }).connect(masterVol);
+
+    // Reverb for space
+    const reverb = new Tone.Reverb({ decay: 4, preDelay: 0.03 }).connect(compressor);
+    // Low-pass filter to create lofi warmth
+    const lowpass = new Tone.Filter(1000, "lowpass").connect(reverb);
+
+    // Vinyl noise layer (subtle)
+    const noise = new Tone.Noise("brown");
+    const noiseFilter = new Tone.Filter(2000, "lowpass");
+    const noiseGain = new Tone.Gain(0.06);
+    noise.connect(noiseFilter).connect(noiseGain).connect(lowpass);
+
+    // Vinyl crackle using a short burst of noise triggered each step (for character)
+    function vinylCrackle(time){
+      // create short noise burst
+      const burst = new Tone.Noise("brown").start(time).stop(time + 0.08);
+      const bf = new Tone.Filter(3000, "lowpass").toDestination();
+      const bg = new Tone.Gain(0.03).connect(lowpass);
+      burst.connect(bf).connect(bg);
+    }
+
+    // Chord synth (polyphonic, soft envelope)
+    const chordSynth = new Tone.PolySynth(Tone.Synth, {
+      oscillator: { type: "sine" },
+      envelope: { attack: 0.4, decay: 0.4, sustain: 0.6, release: 1.6 }
+    }).connect(lowpass);
+
+    // Soft bass/sub tone (low sine)
+    const subSynth = new Tone.Synth({
+      oscillator: { type: "sawtooth" },
+      envelope: { attack: 0.02, decay: 0.3, sustain: 0.2, release: 0.7 }
+    }).connect(lowpass);
+
+    // Drum-ish synths (simple and lightweight)
+    const kick = new Tone.MembraneSynth({
+      pitchDecay: 0.02,
+      octaves: 10,
+      envelope: { attack: 0.001, decay: 0.6, sustain: 0.0, release: 0.6 }
+    }).connect(lowpass);
+
+    const snare = new Tone.NoiseSynth({
+      noise: { type: "white" },
+      envelope: { attack: 0.001, decay: 0.2, sustain: 0.01, release: 0.2 },
+      filter: { Q: 1, type: "bandpass", frequency: 1800 }
+    }).connect(lowpass);
+
+    const hat = new Tone.MetalSynth({
+      frequency: 4000,
+      envelope: { attack: 0.001, decay: 0.12, release: 0.02 },
+      harmonicity: 5.1,
+      modulationIndex: 32,
+      resonance: 4000
+    }).connect(lowpass);
+
+    // Lofi swing and transport setup
+    Tone.Transport.bpm.value = parseInt(bpmSlider.value, 10);
+    Tone.Transport.swing = 0.14; // subtle swing
+    Tone.Transport.loop = true;
+    Tone.Transport.loopStart = "0:0:0";
+    // We'll loop over 8 eighth-note steps -> length 1 measure (8 * 8n = 4/4)
+    Tone.Transport.loopEnd = "0:1:0"; // 1 measure
+
+    // Pattern data (8 steps)
+    // We'll represent steps 0..7
+    let chordProgression = [
+      ["C4", "E4", "A3"], // step 0 chord (Am7-like)
+      null, null, null,
+      ["D3","F4","A4"],   // step 4 chord
+      null, null
+    ];
+
+    // Basic drum pattern arrays: booleans for each step
+    let kickPattern = [1,0,0,0,1,0,0,0];
+    let snarePattern = [0,0,1,0,0,0,1,0];
+    let hatPattern =   [1,1,1,1,1,1,1,1]; // hi-hat on every step (soft)
+
+    // Step callback: runs every 8th-note
+    const steps = 8;
+    let stepIndex = 0;
+
+    function step(time){
+      // subtle vinyl crackle occasionally
+      if (Math.random() < 0.12) vinylCrackle(time);
+
+      // Kick
+      if (kickPattern[stepIndex]) {
+        kick.triggerAttackRelease("C2", "8n", time, 0.9);
+      }
+
+      // Snare
+      if (snarePattern[stepIndex]) {
+        // slightly detune noise for variation
+        snare.triggerAttackRelease("8n", time, 0.5 + Math.random() * 0.15);
+      }
+
+      // Hat (soft)
+      if (hatPattern[stepIndex]) {
+        // small velocity randomness
+        hat.triggerAttackRelease("16n", time, 0.12 + Math.random() * 0.08);
+      }
+
+      // Bass / sub note — play on step 0 and 4 under chord
+      if (stepIndex === 0 || stepIndex === 4) {
+        // pick root from chord if present
+        const chord = chordProgression[stepIndex];
+        if (chord && chord.length) {
+          // pick lowest note for sub
+          const root = chord[0];
+          // play an octave lower
+          const subNote = Tone.Frequency(root).transpose(-12).toNote();
+          subSynth.triggerAttackRelease(subNote, "8n", time, 0.6);
+        }
+      }
+
+      // Chords: trigger on step 0 and 4
+      const chord = chordProgression[stepIndex];
+      if (chord) {
+        chordSynth.triggerAttackRelease(chord, "2n", time, 0.45);
+      }
+
+      // advance step
+      stepIndex = (stepIndex + 1) % steps;
+    }
+
+    // Schedule the repeating callback at every 8th note
+    const seq = new Tone.Loop((time) => { step(time); }, "8n");
+
+    // wire master volume UI
+    volSlider.addEventListener('input', () => {
+      const db = parseFloat(volSlider.value);
+      masterVol.volume.value = db;
+      volVal.textContent = db + " dB";
+    });
+
+    // bpm UI
+    bpmSlider.addEventListener('input', () => {
+      const bpm = parseInt(bpmSlider.value, 10);
+      Tone.Transport.bpm.rampTo(bpm, 0.05);
+      bpmVal.textContent = bpm;
+    });
+
+    // Start / Stop (requires user gesture)
+    startBtn.addEventListener('click', async () => {
+      // Tone requires starting the audio context from user action
+      await Tone.start();
+      // start noise
+      noise.start();
+      seq.start(0);
+      Tone.Transport.start();
+      startBtn.disabled = true;
+      stopBtn.disabled = false;
+    });
+
+    stopBtn.addEventListener('click', () => {
+      Tone.Transport.stop();
+      seq.stop();
+      noise.stop();
+      startBtn.disabled = false;
+      stopBtn.disabled = true;
+    });
+
+    // Randomize chords (simple modal choices)
+    randomBtn.addEventListener('click', () => {
+      // pick a random chord palette (minor7, major7, minor9, etc)
+      const palettes = [
+        [["A3","C4","E4"], null,null,null, ["D3","F4","A4"], null,null,null], // A-ish
+        [["E3","G#3","B3"], null,null,null, ["C#3","E3","G#3"], null,null,null], // E
+        [["G3","B3","D4"], null,null,null, ["E3","G3","B3"], null,null,null], // G
+        [["D3","F#3","A3"], null,null,null, ["B2","D3","F#3"], null,null,null], // D
+        [["C4","E4","G4"], null,null,null, ["A3","C4","E4"], null,null,null]  // C
+      ];
+      chordProgression = palettes[Math.floor(Math.random()*palettes.length)];
+    });
+
+    // initialize UI values
+    masterVol.volume.value = parseFloat(volSlider.value);
+    bpmVal.textContent = bpmSlider.value;
+    volVal.textContent = volSlider.value + " dB";
+
+    // make sure to gracefully unload on page hide
+    window.addEventListener('pagehide', () => {
+      Tone.Transport.stop();
+      Tone.context.close();
+    });
+
+  })();
+  </script>
+</body>
+</html>
